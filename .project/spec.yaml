@@ -70,7 +70,7 @@ environment:
         package_manager_environment:
             name: ""
             target: ""
-    compose_file_path: workbench/compose.yaml
+    compose_file_path: deploy/workbench/compose.yaml
 execution:
     apps: []
     resources:
