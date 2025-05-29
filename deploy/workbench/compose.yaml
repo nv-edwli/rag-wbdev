@@ -2,11 +2,9 @@ services:
 
   nim-llm:
     container_name: nim-llm-ms
-    image: nvcr.io/nim/meta/llama-3.1-70b-instruct-pb24h2:1.3.4
+    image: nvcr.io/nim/nvidia/llama-3.3-nemotron-super-49b-v1:1.8.3
     volumes:
-      - type: bind
-        source: /tmp    # Can swap "/tmp" to another location, like "nim_cache" (provided). Ensure WRITE permissions first! eg. chmod -R a+w nim_cache. 
-        target: /opt/nim/.cache/
+    - ${MODEL_DIRECTORY:-/tmp}:/opt/nim/.cache
     user: "${USERID}"
     ports:
     - "8999:8000"
@@ -21,7 +19,7 @@ services:
           devices:
             - driver: nvidia
               #count: ${INFERENCE_GPU_COUNT:-all}
-              device_ids: ['${LLM_MS_GPU_ID1:-2}', '${LLM_MS_GPU_ID2:-3}']
+              device_ids: ['${LLM_MS_GPU_ID:-1}']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8000/v1/health/ready')"]
@@ -34,9 +32,7 @@ services:
     container_name: nemoretriever-embedding-ms
     image: nvcr.io/nim/nvidia/llama-3.2-nv-embedqa-1b-v2:1.5.0
     volumes:
-      - type: bind
-        source: /tmp    # Can swap "/tmp" to another location, like "nim_cache" (provided). Ensure WRITE permissions first! eg. chmod -R a+w nim_cache. 
-        target: /opt/nim/.cache/
+    - ${MODEL_DIRECTORY:-/tmp}:/opt/nim/.cache
     ports:
     - "9080:8000"
     expose:
@@ -51,7 +47,7 @@ services:
           devices:
             - driver: nvidia
               # count: ${INFERENCE_GPU_COUNT:-all}
-              device_ids: ['${EMBEDDING_MS_GPU_ID:-5}']
+              device_ids: ['${EMBEDDING_MS_GPU_ID:-0}']
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health/ready"]
@@ -65,9 +61,7 @@ services:
     container_name: nemoretriever-ranking-ms
     image: nvcr.io/nim/nvidia/llama-3.2-nv-rerankqa-1b-v2:1.3
     volumes:
-      - type: bind
-        source: /tmp    # Can swap "/tmp" to another location, like "nim_cache" (provided). Ensure WRITE permissions first! eg. chmod -R a+w nim_cache. 
-        target: /opt/nim/.cache/
+    - ${MODEL_DIRECTORY:-/tmp}:/opt/nim/.cache
     ports:
     - "1976:8000"
     expose:
@@ -86,7 +80,7 @@ services:
           devices:
             - driver: nvidia
               # count: ${INFERENCE_GPU_COUNT:-all}
-              device_ids: ['${RANKING_MS_GPU_ID:-5}']
+              device_ids: ['${RANKING_MS_GPU_ID:-0}']
               capabilities: [gpu]
     profiles: ["local"]
 
@@ -118,7 +112,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['${YOLOX_MS_GPU_ID:-4}']
+              device_ids: ['${YOLOX_MS_GPU_ID:-0}']
               capabilities: [gpu]
     runtime: nvidia
     profiles: ["local"]
@@ -142,7 +136,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['${YOLOX_GRAPHICS_MS_GPU_ID:-4}']
+              device_ids: ['${YOLOX_GRAPHICS_MS_GPU_ID:-0}']
               capabilities: [gpu]
     runtime: nvidia
     profiles: ["local"]
@@ -165,7 +159,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids:  ['${YOLOX_TABLE_MS_GPU_ID:-4}']
+              device_ids:  ['${YOLOX_TABLE_MS_GPU_ID:-0}']
               capabilities: [gpu]
     runtime: nvidia
     profiles: ["local"]
@@ -189,7 +183,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids:  ['${PADDLE_MS_GPU_ID:-4}']
+              device_ids:  ['${PADDLE_MS_GPU_ID:-0}']
               capabilities: [gpu]
     runtime: nvidia
     profiles: ["local"]
@@ -197,10 +191,10 @@ services:
   # Main ingestor server which is responsible for ingestion
   ingestor-server:
     container_name: ingestor-server
-    image: nvcr.io/nvidia/blueprint/ingestor-server:${TAG:-2.0.0}
+    image: nvcr.io/nvidia/blueprint/ingestor-server:${TAG:-2.1.0}
     build:
       # Set context to repo's root directory
-      context: ../
+      context: ../../
       dockerfile: src/ingestor_server/Dockerfile
     # start the server on port 8082 with 4 workers for improved latency on concurrent requests.
     command: --port 8082 --host 0.0.0.0 --workers 1
@@ -232,7 +226,7 @@ services:
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:?"NVIDIA_API_KEY is required"}
 
       ##===Embedding Model specific configurations===
-      # url on which embedding model is hosted. If Nvidia hosted API is used
+      # url on which embedding model is hosted. If "", Nvidia hosted API is used
       APP_EMBEDDINGS_SERVERURL: ${APP_EMBEDDINGS_SERVERURL-"nemoretriever-embedding-ms:8000"}
       APP_EMBEDDINGS_MODELNAME: ${APP_EMBEDDINGS_MODELNAME:-nvidia/llama-3.2-nv-embedqa-1b-v2}
       APP_EMBEDDINGS_DIMENSIONS: ${APP_EMBEDDINGS_DIMENSIONS:-2048}
@@ -246,13 +240,14 @@ services:
       APP_NVINGEST_EXTRACTTABLES: ${APP_NVINGEST_EXTRACTTABLES:-True}
       APP_NVINGEST_EXTRACTCHARTS: ${APP_NVINGEST_EXTRACTCHARTS:-True}
       APP_NVINGEST_EXTRACTIMAGES: ${APP_NVINGEST_EXTRACTIMAGES:-False}
-      APP_NVINGEST_EXTRACTMETHOD: ${APP_NVINGEST_EXTRACTMETHOD:-pdfium}
+      APP_NVINGEST_PDFEXTRACTMETHOD: ${APP_NVINGEST_PDFEXTRACTMETHOD:-None} # Select from pdfium, nemoretriever_parse, None
       # Extract text by "page" only recommended for documents with pages like .pdf, .docx, etc.
       APP_NVINGEST_TEXTDEPTH: ${APP_NVINGEST_TEXTDEPTH:-page} # extract by "page" or "document"
 
       ##===NV-Ingest Splitting Configurations========
-      APP_NVINGEST_CHUNKSIZE: ${APP_NVINGEST_CHUNKSIZE:-1024}
+      APP_NVINGEST_CHUNKSIZE: ${APP_NVINGEST_CHUNKSIZE:-512}
       APP_NVINGEST_CHUNKOVERLAP: ${APP_NVINGEST_CHUNKOVERLAP:-150}
+      APP_NVINGEST_ENABLEPDFSPLITTER: ${APP_NVINGEST_ENABLEPDFSPLITTER:-True}
 
       ##===NV-Ingest Caption Model configurations====
       APP_NVINGEST_CAPTIONMODELNAME: ${APP_NVINGEST_CAPTIONMODELNAME:-"meta/llama-3.2-11b-vision-instruct"}
@@ -262,8 +257,22 @@ services:
       # Choose whether to store the extracted content in the vector store for citation support
       ENABLE_CITATIONS: ${ENABLE_CITATIONS:-True}
 
+      # Enable ingestion in chunks for multi-user support (Recommended to increase number of workers when set to True)
+      # Also, recommended to set when API endpoints are used for nv-ingest NIMs instead of self-hosted endpoints
+      # In case you encounter OOM errors, set to True to optimize memory usage
+      ENABLE_NV_INGEST_BATCH_MODE: ${ENABLE_NV_INGEST_BATCH_MODE:-True}
+      NV_INGEST_FILES_PER_BATCH: ${NV_INGEST_FILES_PER_BATCH:-128} # Number of documents to process in each chunk
+
       # Log level for server, supported level NOTSET, DEBUG, INFO, WARN, ERROR, CRITICAL
       LOGLEVEL: ${LOGLEVEL:-INFO}
+
+      # [Optional] Redis configuration for task status and result storage
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_DB: ${REDIS_DB:-0}
+
+      # Bulk upload to MinIO
+      ENABLE_MINIO_BULK_UPLOAD: ${ENABLE_MINIO_BULK_UPLOAD:-False}
 
     ports:
       - "8082:8082"
@@ -279,7 +288,7 @@ services:
     profiles: ["ingest"]
 
   nv-ingest-ms-runtime:
-    image: nvcr.io/nvidia/nemo-microservices/nv-ingest:25.3.0
+    image: nvcr.io/nvidia/nemo-microservices/nv-ingest:25.4.1
     cpuset: "0-15"
     volumes:
       - ${DATASET_ROOT:-./data}:/workspace/data
@@ -318,7 +327,7 @@ services:
       - NVIDIA_BUILD_API_KEY=${NVIDIA_API_KEY:-nvidiaapikey}
       - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
       # Self-hosted paddle endpoints.
-      - PADDLE_GRPC_ENDPOINT=paddle:8001
+      - PADDLE_GRPC_ENDPOINT=${PADDLE_GRPC_ENDPOINT:-paddle:8001}
       - PADDLE_HTTP_ENDPOINT=${PADDLE_HTTP_ENDPOINT:-http://paddle:8000/v1/infer}
       - PADDLE_INFER_PROTOCOL=${PADDLE_INFER_PROTOCOL:-grpc}
       # build.nvidia.com hosted paddle endpoints.
@@ -330,19 +339,19 @@ services:
       # build.nvidia.com hosted yolox endpoints.
       #- YOLOX_HTTP_ENDPOINT=https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-page-elements-v2
       #- YOLOX_INFER_PROTOCOL=http
-      - YOLOX_GRPC_ENDPOINT=page-elements:8001
+      - YOLOX_GRPC_ENDPOINT=${YOLOX_GRPC_ENDPOINT:-page-elements:8001}
       - YOLOX_HTTP_ENDPOINT=${YOLOX_HTTP_ENDPOINT:-http://page-elements:8000/v1/infer}
       - YOLOX_INFER_PROTOCOL=${YOLOX_INFER_PROTOCOL:-grpc}
       # build.nvidia.com hosted yolox-graphics-elements endpoints.
       #- YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT=https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-graphic-elements-v1
       #- YOLOX_GRAPHIC_ELEMENTS_INFER_PROTOCOL=http
-      - YOLOX_GRAPHIC_ELEMENTS_GRPC_ENDPOINT=graphic-elements:8001
+      - YOLOX_GRAPHIC_ELEMENTS_GRPC_ENDPOINT=${YOLOX_GRAPHIC_ELEMENTS_GRPC_ENDPOINT:-graphic-elements:8001}
       - YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT=${YOLOX_GRAPHIC_ELEMENTS_HTTP_ENDPOINT:-http://graphic-elements:8000/v1/infer}
       - YOLOX_GRAPHIC_ELEMENTS_INFER_PROTOCOL=${YOLOX_GRAPHIC_ELEMENTS_INFER_PROTOCOL:-grpc}
       # build.nvidia.com hosted  yolox-table-elements endpoints.
       #- YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT=https://ai.api.nvidia.com/v1/cv/nvidia/nemoretriever-table-structure-v1
       #- YOLOX_TABLE_STRUCTURE_INFER_PROTOCOL=http
-      - YOLOX_TABLE_STRUCTURE_GRPC_ENDPOINT=table-structure:8001
+      - YOLOX_TABLE_STRUCTURE_GRPC_ENDPOINT=${YOLOX_TABLE_STRUCTURE_GRPC_ENDPOINT:-table-structure:8001}
       - YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT=${YOLOX_TABLE_STRUCTURE_HTTP_ENDPOINT:-http://table-structure:8000/v1/infer}
       - YOLOX_TABLE_STRUCTURE_INFER_PROTOCOL=${YOLOX_TABLE_STRUCTURE_INFER_PROTOCOL:-grpc}
       # Incase of nvidia-hosted caption model, use the endpoint url as - https://ai.api.nvidia.com/v1/gr/meta/llama-3.2-11b-vision-instruct/chat/completions
@@ -359,10 +368,10 @@ services:
   # Main orchestrator server which stiches together all calls to different services to fulfill the user request
   rag-server:
     container_name: rag-server
-    image: nvcr.io/nvidia/blueprint/rag-server:${TAG:-2.0.0}
+    image: nvcr.io/nvidia/blueprint/rag-server:${TAG:-2.1.0}
     build:
       # Set context to repo's root directory
-      context: ../
+      context: ../../
       dockerfile: src/Dockerfile
     # start the server on port 8081 with 8 workers for improved latency on concurrent requests.
     command: --port 8081 --host 0.0.0.0 --workers 8
@@ -387,26 +396,26 @@ services:
       # vectorstore collection name to store embeddings
       COLLECTION_NAME: ${COLLECTION_NAME:-multimodal_data}
       APP_RETRIEVER_SCORETHRESHOLD: 0.25
-      # Top K from vector DB, which goes as input to reranker model - not applicable if ENABLE_RERANKER is set to False
-      VECTOR_DB_TOPK: 100
+      # Top K from vector DB, which goes as input to reranker model if enabled, else goes to LLM prompt
+      VECTOR_DB_TOPK: ${VECTOR_DB_TOPK:-100}
 
       ##===LLM Model specific configurations===
-      APP_LLM_MODELNAME: ${APP_LLM_MODELNAME:-"meta/llama-3.1-70b-instruct"}
-      # url on which llm model is hosted. If Nvidia hosted API is used
+      APP_LLM_MODELNAME: ${APP_LLM_MODELNAME:-"nvidia/llama-3.3-nemotron-super-49b-v1"}
+      # url on which llm model is hosted. If "", Nvidia hosted API is used
       APP_LLM_SERVERURL: ${APP_LLM_SERVERURL-"nim-llm:8000"}
 
       ##===Query Rewriter Model specific configurations===
       APP_QUERYREWRITER_MODELNAME: ${APP_QUERYREWRITER_MODELNAME:-"meta/llama-3.1-8b-instruct"}
-      # url on which query rewriter model is hosted. If Nvidia hosted API is used
+      # url on which query rewriter model is hosted. If "", Nvidia hosted API is used
       APP_QUERYREWRITER_SERVERURL: ${APP_QUERYREWRITER_SERVERURL-"nim-llm-llama-8b-ms:8000"}
 
       ##===Embedding Model specific configurations===
-      # url on which embedding model is hosted. If Nvidia hosted API is used
+      # url on which embedding model is hosted. If "", Nvidia hosted API is used
       APP_EMBEDDINGS_SERVERURL: ${APP_EMBEDDINGS_SERVERURL-"nemoretriever-embedding-ms:8000"}
       APP_EMBEDDINGS_MODELNAME: ${APP_EMBEDDINGS_MODELNAME:-nvidia/llama-3.2-nv-embedqa-1b-v2}
 
       ##===Reranking Model specific configurations===
-      # url on which ranking model is hosted. If Nvidia hosted API is used
+      # url on which ranking model is hosted. If "", Nvidia hosted API is used
       APP_RANKING_SERVERURL: ${APP_RANKING_SERVERURL-"nemoretriever-ranking-ms:8000"}
       APP_RANKING_MODELNAME: ${APP_RANKING_MODELNAME:-"nvidia/llama-3.2-nv-rerankqa-1b-v2"}
       ENABLE_RERANKER: ${ENABLE_RERANKER:-True}
@@ -414,7 +423,7 @@ services:
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:?"NVIDIA_API_KEY is required"}
 
       # Number of document chunks to insert in LLM prompt
-      APP_RETRIEVER_TOPK: 10
+      APP_RETRIEVER_TOPK: ${APP_RETRIEVER_TOPK:-10}
 
       # Log level for server, supported level NOTSET, DEBUG, INFO, WARN, ERROR, CRITICAL
       LOGLEVEL: ${LOGLEVEL:-INFO}
@@ -452,6 +461,9 @@ services:
       # Whether to filter content within <think></think> tags in model responses
       FILTER_THINK_TOKENS: ${FILTER_THINK_TOKENS:-true}
 
+      # Whether to enable thinking in the rag chain for llama-3.3-nemotron-super-49b model
+      ENABLE_NEMOTRON_THINKING: ${ENABLE_NEMOTRON_THINKING:-false}
+
       # enable reflection (context relevance and response groundedness checking) in the rag chain
       ENABLE_REFLECTION: ${ENABLE_REFLECTION:-false}
       # Maximum number of context relevance loop iterations
@@ -462,7 +474,7 @@ services:
       RESPONSE_GROUNDEDNESS_THRESHOLD: ${RESPONSE_GROUNDEDNESS_THRESHOLD:-1}
       # reflection llm
       REFLECTION_LLM: ${REFLECTION_LLM:-"mistralai/mixtral-8x22b-instruct-v0.1"}
-      # reflection llm server url. If Nvidia hosted API is used
+      # reflection llm server url. If "", Nvidia hosted API is used
       REFLECTION_LLM_SERVERURL: ${REFLECTION_LLM_SERVERURL-"nim-llm-mixtral-8x22b:8000"}
 
     ports:
@@ -475,14 +487,14 @@ services:
   # Sample UI container which interacts with APIs exposed by rag-server container
   rag-playground:
     container_name: rag-playground
-    image: nvcr.io/nvidia/blueprint/rag-playground:${TAG:-2.0.0}
+    image: nvcr.io/nvidia/blueprint/rag-playground:${TAG:-2.1.0}
     build:
       # Set context to repo's root directory
-      context: ../frontend
+      context: ../../frontend
       dockerfile: ./Dockerfile
       args:
         # Model name for LLM
-        NEXT_PUBLIC_MODEL_NAME: ${APP_LLM_MODELNAME:-meta/llama-3.1-70b-instruct}
+        NEXT_PUBLIC_MODEL_NAME: ${APP_LLM_MODELNAME:-nvidia/llama-3.3-nemotron-super-49b-v1}
         # Model name for embeddings
         NEXT_PUBLIC_EMBEDDING_MODEL: ${APP_EMBEDDINGS_MODELNAME:-nvidia/llama-3.2-nv-embedqa-1b-v2}
         # Model name for reranking
@@ -511,7 +523,7 @@ services:
       MINIO_ADDRESS: minio:9010
       KNOWHERE_GPU_MEM_POOL_SIZE: 2048;4096
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-./volumes/milvus}:/var/lib/milvus
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
     # healthcheck:
     #   test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
     #   interval: 30s
@@ -534,7 +546,7 @@ services:
             - driver: nvidia
               capabilities: ["gpu"]
               # count: ${INFERENCE_GPU_COUNT:-all}
-              device_ids: ['${VECTORSTORE_GPU_DEVICE_ID:-4}']
+              device_ids: ['${VECTORSTORE_GPU_DEVICE_ID:-0}']
     profiles: ["vectordb"]
 
   etcd:
@@ -546,7 +558,7 @@ services:
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
       - ETCD_SNAPSHOT_COUNT=50000
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-./volumes/etcd}:/etcd
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
@@ -565,7 +577,7 @@ services:
       - "9011:9011"
       - "9010:9010"
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-./volumes/minio}:/minio_data
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
     command: minio server /minio_data --console-address ":9011" --address ":9010"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9010/minio/health/live"]
