@@ -586,6 +586,143 @@ services:
       retries: 3
     profiles: ["vectordb"]
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    hostname: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ../config/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "9988:9988" # Prometheus metrics exposed by the collector
+      - "8889:8889" # Prometheus exporter metrics
+      - "13133:13133" # health_check extension
+      - "9411" # Zipkin receiver
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP/HTTP receiver
+      - "55680:55679" # zpages extension
+    environment:
+      NVWB_TRIM_PREFIX: false
+    depends_on:
+      - zipkin
+    profiles: ["observability"]
+
+  zipkin:
+    image: openzipkin/zipkin
+    environment:
+      JAVA_OPTS: "-Xms4g -Xmx8g -XX:+ExitOnOutOfMemoryError"
+      NVWB_TRIM_PREFIX: false
+    ports:
+      - "9411:9411" # Zipkin UI and API
+    profiles: ["observability"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --web.console.templates=/etc/prometheus/consoles
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --storage.tsdb.retention.time=1h
+      - --config.file=/etc/prometheus/prometheus-config.yaml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --web.route-prefix=/
+      - --enable-feature=exemplar-storage
+      - --enable-feature=otlp-write-receiver
+    volumes:
+      - ../config/prometheus.yaml:/etc/prometheus/prometheus-config.yaml
+    environment:
+      NVWB_TRIM_PREFIX: false
+    ports:
+      - "9090:9090"
+    profiles: ["observability"]
+
+  grafana:
+    container_name: grafana-service
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      NVWB_TRIM_PREFIX: false
+    profiles: ["observability"]
+
+  nemo-guardrails-microservice:
+    container_name: nemo-guardrails-microservice
+    image: nvcr.io/nvidia/nemo-microservices/guardrails:25.02
+    ports:
+      - "7331:7331"
+    volumes:
+      - ./nemoguardrails/config-store:/config-store
+    environment:
+      CONFIG_STORE_PATH: /config-store
+      NIM_ENDPOINT_API_KEY: ${NGC_API_KEY}
+      NIM_ENDPOINT_URL: ${NIM_ENDPOINT_URL:-http://nim-llm:8000/v1}
+      DEFAULT_CONFIG_ID: ${DEFAULT_CONFIG:-nemoguard}
+    depends_on:
+      content-safety:
+        condition: service_healthy
+        required: false
+      topic-control:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:7331/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    profiles: ["guardrails"]
+
+  content-safety:
+    container_name: llama-3.1-nemoguard-8b-content-safety
+    image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-content-safety:1.0.0
+    environment:
+      - NGC_API_KEY=${NVIDIA_API_KEY:?"NVIDIA_API_KEY is required"}
+      - NIM_SERVED_MODEL_NAME=llama-3.1-nemoguard-8b-content-safety
+      - NIM_CUSTOM_MODEL_NAME=llama-3.1-nemoguard-8b-content-safety
+    user: "${USERID}"
+    volumes:
+      - ${MODEL_DIRECTORY:-/tmp}:/opt/nim/.cache
+    ports:
+      - "8123:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ['${CONTENT_SAFETY_GPU_ID:-7}']
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8000/v1/health/ready')"]
+      interval: 10s
+      timeout: 20s
+      retries: 100
+    profiles: ["guardrails"]
+
+  topic-control:
+    container_name: llama-3.1-nemoguard-8b-topic-control
+    image: nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-topic-control:1.0.0
+    environment:
+      - NGC_API_KEY=${NVIDIA_API_KEY:?"NVIDIA_API_KEY is required"}
+      - NIM_SERVED_MODEL_NAME=llama-3.1-nemoguard-8b-topic-control
+      - NIM_CUSTOM_MODEL_NAME=llama-3.1-nemoguard-8b-topic-control
+    user: "${USERID}"
+    volumes:
+      - ${MODEL_DIRECTORY:-/tmp}:/opt/nim/.cache
+    ports:
+      - "8124:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ['${TOPIC_CONTROL_GPU_ID:-6}']
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:8000/v1/health/ready')"]
+      interval: 10s
+      timeout: 20s
+      retries: 100
+    profiles: ["guardrails"]
+
 volumes:
   ingest:
   vectordb:
